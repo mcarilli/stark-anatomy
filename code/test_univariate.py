@@ -96,3 +96,33 @@ def test_zerofier( ):
 
     print("univariate zerofier test success \\o/")
 
+
+field = Field(52435875175126190479447740508185965837690552500527637822603658699938581184513)
+values = [\
+FieldElement(69, field),
+FieldElement(78, field),
+FieldElement(32, field),
+FieldElement(65, field),
+FieldElement(82, field),
+FieldElement(71, field),
+FieldElement(69, field),
+FieldElement(78, field),
+FieldElement(84, field),
+FieldElement(73, field),
+FieldElement(78, field),
+FieldElement(65, field),
+FieldElement(32, field),
+FieldElement(78, field),
+FieldElement(65, field),
+FieldElement(67, field),
+FieldElement(73, field),
+FieldElement(32, field),
+FieldElement(84, field),
+FieldElement(73, field),
+FieldElement(69, field),
+FieldElement(82, field),
+FieldElement(65, field),
+]
+p = Polynomial(values)
+print(p.evaluate(FieldElement(1, field)))
+print(p.evaluate(FieldElement(-1, field)))

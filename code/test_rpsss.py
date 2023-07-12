@@ -78,3 +78,5 @@ def test_fast_rpsss( ):
 
     print("size of signature:", len(sig), "bytes, or ", len(sig) / (2**13), "kB")
 
+if __name__ == "__main__":
+    test_rpsss()

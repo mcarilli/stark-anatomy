@@ -103,6 +103,8 @@ class MPolynomial:
         return acc
 
     def evaluate_symbolic( self, point ):
+        print(type(point))
+        print(type(point[0]))
         acc = Polynomial([])
         for k, v in self.dictionary.items():
             prod = Polynomial([v])

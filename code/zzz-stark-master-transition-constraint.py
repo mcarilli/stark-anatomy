@@ -1,4 +1,3 @@
-from algebra import Field
 from fri import *
 from univariate import *
 from multivariate import *
@@ -67,11 +66,9 @@ class Stark:
         238501873350547807154239999251679632315 * X^7 * t0(o * X)^1
         """
         point_degrees = [1] + [self.original_trace_length+self.num_randomizers-1] * 2*self.num_registers
-        print(point_degrees)
-        # for i, c in enumerate(transition_constraints):
-        #     print("constraint {}".format(i))
-        #     for k, v in transition_constraints[0].dictionary.items():
-        #         print(k, v)
+        # print(point_degrees)
+        # for k, v in transition_constraints[0].dictionary.items():
+        #     print(k, v)
         ret = [max( sum(r*l for r, l in zip(point_degrees, k)) for k, v in a.dictionary.items()) for a in transition_constraints]
         print(ret)
         return ret
@@ -111,11 +108,11 @@ class Stark:
         return [self.field.sample(blake2b(randomness + bytes(i)).digest()) for i in range(0, number)]
 
     def prove( self, trace, transition_constraints, boundary, proof_stream=None ):
-        print("len(transition_constraints) {}".format(len(transition_constraints)))
-
         # create proof stream object if necessary
         if proof_stream == None:
             proof_stream = ProofStream()
+
+        print("len(trace) {}".format(len(trace)))
         
         # concatenate randomizers
         for k in range(self.num_randomizers):
@@ -147,10 +144,16 @@ class Stark:
 
         # symbolically evaluate transition constraints
         point = [Polynomial([self.field.zero(), self.field.one()])] + trace_polynomials + [tp.scale(self.omicron) for tp in trace_polynomials]
+        # this could be done in a different order (first compress constraints then evaluate_symbolic(point) once)
         transition_polynomials = [a.evaluate_symbolic(point) for a in transition_constraints]
+        r_weights = self.sample_weights(len(transition_polynomials), proof_stream.prover_fiat_shamir())
+        print("r_weights in prover", [r.value for r in r_weights])
+        master_transition_polynomial = reduce(lambda a, b : a + b,
+                                              [Polynomial([r_weights[i]]) * transition_polynomials[i] for i in range(len(r_weights))],
+                                              Polynomial([]))
 
         # divide out zerofier
-        transition_quotients = [tp / self.transition_zerofier() for tp in transition_polynomials]
+        master_transition_quotient = master_transition_polynomial / self.transition_zerofier()
 
         # commit to randomizer polynomial
         randomizer_polynomial = Polynomial([self.field.sample(os.urandom(17)) for i in range(self.max_degree(transition_constraints)+1)])
@@ -162,21 +165,20 @@ class Stark:
         #  - 1 randomizer
         #  - 2 for every transition quotient
         #  - 2 for every boundary quotient
-        weights = self.sample_weights(1 + 2*len(transition_quotients) + 2*len(boundary_quotients), proof_stream.prover_fiat_shamir())
+        weights = self.sample_weights(1 + 2 + 2 * len(boundary_quotients), proof_stream.prover_fiat_shamir())
 
-        assert([tq.degree() for tq in transition_quotients] == self.transition_quotient_degree_bounds(transition_constraints)), "transition quotient degrees do not match with expectation"
+        assert master_transition_quotient.degree() == max(self.transition_quotient_degree_bounds(transition_constraints)), \
+               "transition quotient degrees do not match with expectation"
 
         # compute terms of nonlinear combination polynomial
         x = Polynomial([self.field.zero(), self.field.one()])
         max_degree = self.max_degree(transition_constraints)
         print("max_degree {}".format(max_degree))
-        quit()
         terms = []
         terms += [randomizer_polynomial]
-        for i in range(len(transition_quotients)):
-            terms += [transition_quotients[i]]
-            shift = max_degree - self.transition_quotient_degree_bounds(transition_constraints)[i]
-            terms += [(x^shift) * transition_quotients[i]]
+        terms += [master_transition_quotient]
+        shift = max_degree - master_transition_quotient.degree()
+        terms += [(x^shift) * master_transition_quotient]
         for i in range(self.num_registers):
             terms += [boundary_quotients[i]]
             shift = max_degree - self.boundary_quotient_degree_bounds(len(trace), boundary)[i]
@@ -185,7 +187,6 @@ class Stark:
         # take weighted sum
         # combination = sum(weights[i] * terms[i] for all i)
         combination = reduce(lambda a, b : a+b, [Polynomial([weights[i]]) * terms[i] for i in range(len(terms))], Polynomial([]))
-        print("combination.degree() {}".format(combination.degree()))
 
         # compute matching codeword
         combined_codeword = combination.evaluate_domain(fri_domain)
@@ -232,11 +233,19 @@ class Stark:
         for s in range(self.num_registers):
             boundary_quotient_roots = boundary_quotient_roots + [proof_stream.pull()]
 
+        r_weights = self.sample_weights(len(transition_constraints), proof_stream.verifier_fiat_shamir())
+        print("r_weights in verifier", [r.value for r in r_weights])
+        # we could combine transition_constraints into one master constraint here, doing some symbolic algebra here
+        # to avoid multiple explicit point evaluations for master_transition_constraint_value below
+
         # get Merkle root of randomizer polynomial
         randomizer_root = proof_stream.pull()
 
         # get weights for nonlinear combination
-        weights = self.sample_weights(1 + 2*len(transition_constraints) + 2*len(self.boundary_interpolants(boundary)), proof_stream.verifier_fiat_shamir())
+        #  - 1 randomizer
+        #  - 2 for every transition quotient
+        #  - 2 for every boundary quotient
+        weights = self.sample_weights(1 + 2 + 2*len(self.boundary_interpolants(boundary)), proof_stream.verifier_fiat_shamir())
 
         # verify low degree of combination polynomial
         polynomial_values = []
@@ -246,8 +255,8 @@ class Stark:
             return False
 
         indices = [i for i,v in polynomial_values]
-        print("indices in verifier", indices)
         values = [v for i,v in polynomial_values]
+        print("indices in verifier", indices)
 
         # read and verify leafs, which are elements of boundary quotient codewords
         duplicated_indices = [i for i in indices] + [(i + self.expansion_factor) % self.fri.domain_length for i in indices]
@@ -261,6 +270,7 @@ class Stark:
                 verifier_accepts = verifier_accepts and Merkle.verify(boundary_quotient_roots[r], i, path, leafs[r][i])
                 if not verifier_accepts:
                     return False
+        print("len(leafs[0])", len(leafs[0]))
 
         # read and verify randomizer leafs
         randomizer = dict()
@@ -289,18 +299,20 @@ class Stark:
                 next_trace[s] = leafs[s][next_index] * zerofier.evaluate(domain_next_index) + interpolant.evaluate(domain_next_index)
 
             point = [domain_current_index] + current_trace + next_trace
-            transition_constraints_values = [transition_constraints[s].evaluate(point) for s in range(len(transition_constraints))]
+            master_transition_constraint_value = reduce(lambda a, b: a + b,
+                                                        [r_weights[s] * transition_constraints[s].evaluate(point) for s in range(len(transition_constraints))],
+                                                        self.field.zero())
 
             # compute nonlinear combination
             counter = 0
             terms = []
             terms += [randomizer[current_index]]
-            for s in range(len(transition_constraints_values)):
-                tcv = transition_constraints_values[s]
-                quotient = tcv / self.transition_zerofier().evaluate(domain_current_index)
-                terms += [quotient]
-                shift = self.max_degree(transition_constraints) - self.transition_quotient_degree_bounds(transition_constraints)[s]
-                terms += [quotient * (domain_current_index^shift)]
+
+            quotient = master_transition_constraint_value / self.transition_zerofier().evaluate(domain_current_index)
+            terms += [quotient]
+            shift = self.max_degree(transition_constraints) - max(self.transition_quotient_degree_bounds(transition_constraints))
+            terms += [quotient * (domain_current_index^shift)]
+
             for s in range(self.num_registers):
                 bqv = leafs[s][current_index] # boundary quotient value
                 terms += [bqv]

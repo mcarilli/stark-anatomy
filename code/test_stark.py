@@ -5,6 +5,7 @@ from rescue_prime import *
 from fri import *
 from ip import *
 from stark import *
+# from stark_master_transition_constraint import *
 
 def test_stark( ):
     field = Field.main()
@@ -58,3 +59,5 @@ def test_stark( ):
 
     proof = stark.prove(trace, air, boundary) # should fail
 
+if __name__ == "__main__":
+    test_stark()
